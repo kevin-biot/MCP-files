@@ -4,7 +4,15 @@ echo "🔍 COMPLETE VECTOR DATABASE DATA INSPECTION"
 echo "============================================"
 echo ""
 
-MEMORY_DIR="/Users/kevinbrown/servers/.mcp-memory"
+# Check local directory first, then fallback to original location
+LOCAL_MEMORY_DIR="./.mcp-memory"
+ORIGINAL_MEMORY_DIR="/Users/kevinbrown/servers/.mcp-memory"
+
+if [ -d "$LOCAL_MEMORY_DIR" ]; then
+    MEMORY_DIR="$LOCAL_MEMORY_DIR"
+else
+    MEMORY_DIR="$ORIGINAL_MEMORY_DIR"
+fi
 
 # Function to check ChromaDB
 check_chromadb() {
