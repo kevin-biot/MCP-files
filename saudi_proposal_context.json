@@ -1,0 +1,29 @@
+{
+  "sessionId": "saudi-allam-mcp-proposal",
+  "timestamp": 1754745800000,
+  "userMessage": "The Saudis use Allam 7B but it is horrible with tool calls but they want a national LLM they control - how could we propose a project that retrains Allam and also adds LM Studio and AWS and shared vector memory for smaller enterprises for devs and operations or indeed any company needing more shared knowledge?",
+  "context": [
+    "Saudi Arabia national AI strategy",
+    "Allam 7B model limitations", 
+    "Tool calling capabilities",
+    "MCP server integration",
+    "Shared vector memory systems",
+    "Enterprise knowledge management",
+    "LM Studio deployment",
+    "AWS infrastructure"
+  ],
+  "tags": [
+    "saudi-arabia",
+    "allam-7b",
+    "national-llm",
+    "tool-calling",
+    "mcp-integration", 
+    "shared-memory",
+    "enterprise-solutions",
+    "aws-deployment",
+    "lm-studio",
+    "knowledge-management",
+    "model-retraining",
+    "business-proposal"
+  ]
+}

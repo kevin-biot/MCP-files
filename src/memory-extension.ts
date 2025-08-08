@@ -25,12 +25,15 @@ export class ChromaMemoryManager {
 
   constructor(memoryDir: string) {
     this.memoryDir = memoryDir;
-    // Try ChromaDB server connection with correct base URL
+    
     try {
-      // Connect to ChromaDB HTTP server (use full URL)
+      // Connect to ChromaDB HTTP server (no embedding function needed for server mode)
       this.client = new ChromaClient({
-        path: "http://127.0.0.1:8000"
+        host: "127.0.0.1",
+        port: 8000
       });
+      
+      console.log("✓ ChromaDB client initialized");
     } catch (error) {
       console.error('ChromaDB initialization failed, will use JSON-only mode:', error);
       this.client = null;
@@ -47,19 +50,32 @@ export class ChromaMemoryManager {
       // Only try ChromaDB if client was successfully created
       if (this.client) {
         try {
-          // Initialize or get existing collection
-          this.collection = await this.client.getCollection({
-            name: "llm_conversation_memory"
-          });
-        } catch (error) {
+          // First, try to delete existing collection to ensure clean state
+          try {
+            await this.client.deleteCollection({
+              name: "llm_conversation_memory"
+            });
+            console.log("✓ Deleted existing ChromaDB collection");
+          } catch (deleteError) {
+            // Collection might not exist, which is fine
+            console.log("ℹ No existing collection to delete (this is normal)");
+          }
+          
+          // Create new collection (server will handle embeddings automatically)
           this.collection = await this.client.createCollection({
             name: "llm_conversation_memory",
-            metadata: { "hnsw:space": "cosine" }
+            metadata: {
+              "hnsw:space": "cosine"
+            }
           });
+          console.log("✓ Created new ChromaDB collection with cosine distance");
+        } catch (error) {
+          console.error("ChromaDB collection creation failed:", error);
+          throw error;
         }
-        console.error("✓ Chroma memory manager initialized with vector search");
+        console.log("✓ Chroma memory manager initialized with vector search");
       } else {
-        console.error("✓ Memory manager initialized (JSON-only mode)");
+        console.log("✓ Memory manager initialized (JSON-only mode)");
       }
 
       this.initialized = true;
@@ -80,15 +96,24 @@ export class ChromaMemoryManager {
       await this.initialize();
     }
     
+    // Always store to JSON as backup
+    await this.storeConversationToJson(memory);
+    
     if (!this.client || !this.collection) {
-      // Fall back to JSON-only storage
-      return this.storeConversationToJson(memory);
+      return true; // JSON storage succeeded
     }
 
     try {
       const id = `${memory.sessionId}_${memory.timestamp}`;
       const document = `User: ${memory.userMessage}\nAssistant: ${memory.assistantResponse}`;
       
+      console.log('💾 Storing to ChromaDB:', {
+        id,
+        documentLength: document.length,
+        sessionId: memory.sessionId
+      });
+      
+      // For ChromaDB server mode, it will generate embeddings automatically
       await this.collection.add({
         ids: [id],
         documents: [document],
@@ -101,272 +126,251 @@ export class ChromaMemoryManager {
           tags: memory.tags.join(', ')
         }]
       });
-
-      // Also save to JSON for backup
-      await this.storeConversationToJson(memory);
+      
+      console.log('✅ Successfully stored to ChromaDB');
       return true;
     } catch (error) {
-      console.error("Failed to store in Chroma:", error);
-      return this.storeConversationToJson(memory);
+      console.error('ChromaDB storage failed, but JSON backup succeeded:', error);
+      return true; // JSON storage is still working
     }
   }
 
-  private async storeConversationToJson(memory: ConversationMemory): Promise<boolean> {
+  async storeConversationToJson(memory: ConversationMemory): Promise<boolean> {
     try {
-      const jsonFile = path.join(this.memoryDir, `${memory.sessionId}.json`);
-      let conversations = [];
+      const sessionFile = path.join(this.memoryDir, `${memory.sessionId}.json`);
       
+      let existingData: ConversationMemory[] = [];
       try {
-        const existing = await fs.readFile(jsonFile, 'utf-8');
-        conversations = JSON.parse(existing);
+        const content = await fs.readFile(sessionFile, 'utf8');
+        existingData = JSON.parse(content);
       } catch (error) {
-        // File doesn't exist yet
+        // File doesn't exist or is invalid, start with empty array
       }
       
-      conversations.push(memory);
-      await fs.writeFile(jsonFile, JSON.stringify(conversations, null, 2));
+      existingData.push(memory);
+      
+      await fs.writeFile(sessionFile, JSON.stringify(existingData, null, 2));
       return true;
     } catch (error) {
-      console.error("Failed to store to JSON:", error);
+      console.error('JSON storage failed:', error);
       return false;
     }
   }
 
   async searchRelevantMemories(query: string, sessionId?: string, limit: number = 5): Promise<MemorySearchResult[]> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
+    console.log(`🔍 Searching for: "${query}" (sessionId: ${sessionId || 'all'}, limit: ${limit})`);
     
-    if (!this.client || !this.collection) {
-      // Fall back to JSON search
-      return this.searchJsonMemories(query, sessionId, limit);
-    }
+    // First try vector search
+    if (this.collection && this.client) {
+      try {
+        console.log('📊 Attempting ChromaDB vector search...');
+        const results = await this.collection.query({
+          queryTexts: [query],
+          nResults: limit,
+          where: sessionId ? { sessionId } : undefined
+        });
 
-    try {
-      const searchResults = await this.collection.query({
-        queryTexts: [query],
-        nResults: limit,
-        where: sessionId ? { sessionId: sessionId } : undefined
-      });
+        console.log('✅ ChromaDB search successful:', {
+          documentsCount: results.documents[0]?.length || 0,
+          hasDistances: !!results.distances[0],
+          distances: results.distances[0]?.slice(0, 3), // Show first 3 distances
+          distanceRange: results.distances[0] ? {
+            min: Math.min(...results.distances[0]),
+            max: Math.max(...results.distances[0])
+          } : null
+        });
 
-      return searchResults.documents[0].map((doc: string, idx: number) => ({
-        content: doc,
-        metadata: searchResults.metadatas[0][idx],
-        distance: searchResults.distances ? searchResults.distances[0][idx] : 0
-      }));
-    } catch (error) {
-      console.error("Chroma search failed:", error);
-      return this.searchJsonMemories(query, sessionId, limit);
-    }
-  }
-
-  private async searchJsonMemories(query: string, sessionId?: string, limit: number = 5): Promise<MemorySearchResult[]> {
-    try {
-      const files = await fs.readdir(this.memoryDir);
-      const jsonFiles = files.filter(f => f.endsWith('.json'));
-      
-      if (sessionId) {
-        const sessionFile = `${sessionId}.json`;
-        if (jsonFiles.includes(sessionFile)) {
-          return this.searchInJsonFile(path.join(this.memoryDir, sessionFile), query, limit);
+        if (results.documents[0] && results.documents[0].length > 0) {
+          return results.documents[0].map((doc: string, index: number) => ({
+            content: doc,
+            metadata: results.metadatas[0][index],
+            distance: results.distances[0][index]
+          }));
+        } else {
+          console.log('⚠️ ChromaDB returned no results, falling back to JSON search');
         }
-        return [];
+      } catch (error) {
+        console.error('❌ Chroma search failed, falling back to JSON search:', error);
       }
-
-      // Search across all files
-      let allResults: MemorySearchResult[] = [];
-      
-      for (const file of jsonFiles.slice(0, 10)) { // Limit to recent files
-        const results = await this.searchInJsonFile(path.join(this.memoryDir, file), query, limit);
-        allResults.push(...results);
-      }
-
-      // Simple relevance scoring based on keyword matches
-      allResults.sort((a, b) => b.distance - a.distance);
-      return allResults.slice(0, limit);
-    } catch (error) {
-      console.error("JSON search failed:", error);
-      return [];
+    } else {
+      console.log('⚠️ ChromaDB not available, using JSON search directly');
     }
+
+    // Fallback to JSON search
+    console.log('📄 Using JSON search fallback...');
+    const jsonResults = await this.searchJsonMemories(query, sessionId, limit);
+    console.log(`📄 JSON search returned ${jsonResults.length} results`);
+    return jsonResults;
   }
 
-  private async searchInJsonFile(filePath: string, query: string, limit: number): Promise<MemorySearchResult[]> {
+  async searchJsonMemories(query: string, sessionId?: string, limit: number = 5): Promise<MemorySearchResult[]> {
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const conversations = JSON.parse(content);
-      
-      const queryLower = query.toLowerCase();
       const results: MemorySearchResult[] = [];
-
-      for (const conv of conversations) {
-        const searchText = `${conv.userMessage} ${conv.assistantResponse}`.toLowerCase();
-        const contextText = conv.context?.join(' ').toLowerCase() || '';
-        const tagsText = conv.tags?.join(' ').toLowerCase() || '';
+      const queryLower = query.toLowerCase();
+      
+      // Read all session files or specific session
+      const files = sessionId 
+        ? [`${sessionId}.json`]
+        : await fs.readdir(this.memoryDir);
+      
+      for (const file of files) {
+        if (!file.endsWith('.json')) continue;
         
-        let score = 0;
-        if (searchText.includes(queryLower)) score += 3;
-        if (contextText.includes(queryLower)) score += 2;
-        if (tagsText.includes(queryLower)) score += 1;
-        
-        if (score > 0) {
-          results.push({
-            content: `User: ${conv.userMessage}\nAssistant: ${conv.assistantResponse}`,
-            metadata: conv,
-            distance: score
-          });
+        try {
+          const filePath = path.join(this.memoryDir, file);
+          const content = await fs.readFile(filePath, 'utf8');
+          const memories: ConversationMemory[] = JSON.parse(content);
+          
+          for (const memory of memories) {
+            const searchText = `${memory.userMessage} ${memory.assistantResponse} ${memory.tags.join(' ')}`.toLowerCase();
+            
+            if (searchText.includes(queryLower)) {
+              results.push({
+                content: `User: ${memory.userMessage}\nAssistant: ${memory.assistantResponse}`,
+                metadata: {
+                  sessionId: memory.sessionId,
+                  timestamp: memory.timestamp,
+                  tags: memory.tags,
+                  context: memory.context
+                },
+                distance: 0.5 // Dummy distance for JSON search
+              });
+            }
+          }
+        } catch (error) {
+          // Skip invalid files
+          continue;
         }
       }
-
-      results.sort((a, b) => b.distance - a.distance);
+      
       return results.slice(0, limit);
     } catch (error) {
+      console.error('JSON search failed:', error);
       return [];
     }
   }
 
-  async getSessionSummary(sessionId: string): Promise<string> {
-    const memories = await this.searchRelevantMemories("", sessionId, 50);
-    
-    if (memories.length === 0) {
-      return "No previous conversation history found.";
-    }
-
-    // Extract key topics and patterns
-    const topics = new Set<string>();
-    const keyFacts = new Set<string>();
-    
-    memories.forEach(memory => {
-      if (memory.metadata.tags) {
-        memory.metadata.tags.split(', ').forEach((tag: string) => topics.add(tag));
-      }
-      if (memory.metadata.context) {
-        memory.metadata.context.split(', ').forEach((fact: string) => keyFacts.add(fact));
-      }
-    });
-
-    return `
-Previous conversation summary for session ${sessionId}:
-Topics discussed: ${Array.from(topics).join(', ')}
-Key facts: ${Array.from(keyFacts).slice(0, 10).join(', ')}
-Conversation count: ${memories.length}
-    `.trim();
-  }
-
-  async getAllSessions(): Promise<string[]> {
+  async listSessions(): Promise<string[]> {
     try {
       const files = await fs.readdir(this.memoryDir);
       return files
-        .filter(f => f.endsWith('.json'))
-        .map(f => f.replace('.json', ''));
+        .filter(file => file.endsWith('.json'))
+        .map(file => file.replace('.json', ''));
     } catch (error) {
+      console.error('Failed to list sessions:', error);
       return [];
     }
   }
 
-  async deleteSession(sessionId: string): Promise<void> {
-    // Delete from Chroma if available
-    if (this.initialized) {
-      try {
-        const results = await this.collection.get({
-          where: { sessionId: sessionId }
-        });
-        
-        if (results.ids.length > 0) {
-          await this.collection.delete({
-            ids: results.ids
-          });
-        }
-      } catch (error) {
-        console.error('Failed to delete from Chroma:', error);
-      }
-    }
+  async getAllSessions(): Promise<string[]> {
+    return this.listSessions();
+  }
 
-    // Delete JSON backup
-    const jsonFile = path.join(this.memoryDir, `${sessionId}.json`);
+  async getSessionSummary(sessionId: string): Promise<any> {
     try {
-      await fs.unlink(jsonFile);
+      // Try to get from vector search first
+      if (this.collection) {
+        const results = await this.searchRelevantMemories("", sessionId, 10);
+        if (results.length > 0) {
+          return {
+            sessionId,
+            conversationCount: results.length,
+            recentMemories: results.slice(0, 3)
+          };
+        }
+      }
+      
+      // Fallback to JSON
+      const sessionFile = path.join(this.memoryDir, `${sessionId}.json`);
+      const content = await fs.readFile(sessionFile, 'utf8');
+      const memories: ConversationMemory[] = JSON.parse(content);
+      
+      return {
+        sessionId,
+        conversationCount: memories.length,
+        tags: [...new Set(memories.flatMap(m => m.tags))],
+        context: [...new Set(memories.flatMap(m => m.context))],
+        timeRange: {
+          earliest: Math.min(...memories.map(m => m.timestamp)),
+          latest: Math.max(...memories.map(m => m.timestamp))
+        }
+      };
     } catch (error) {
-      // File might not exist
+      console.error(`Failed to get session summary for ${sessionId}:`, error);
+      return null;
     }
   }
 
-  async buildContextPrompt(currentMessage: string, sessionId: string, maxLength: number = 2000): Promise<string> {
-    const relevantMemories = await this.searchRelevantMemories(currentMessage, sessionId, 3);
-    const sessionSummary = await this.getSessionSummary(sessionId);
-    
-    let contextPrompt = `## Previous Context\n${sessionSummary}\n\n`;
-    
-    if (relevantMemories.length > 0) {
-      contextPrompt += `## Relevant Previous Exchanges\n`;
-      relevantMemories.forEach((memory, idx) => {
-        contextPrompt += `${idx + 1}. ${memory.content}\n\n`;
-      });
+  async buildContextPrompt(currentMessage: string, sessionId?: string, maxLength: number = 2000): Promise<string> {
+    try {
+      const relevantMemories = await this.searchRelevantMemories(currentMessage, sessionId, 3);
+      
+      if (relevantMemories.length === 0) {
+        return "";
+      }
+      
+      let context = "## Relevant Context from Previous Conversations:\n\n";
+      let currentLength = context.length;
+      
+      for (const memory of relevantMemories) {
+        const addition = `### ${memory.metadata.sessionId || 'Session'}\n${memory.content}\n\n`;
+        if (currentLength + addition.length > maxLength) {
+          break;
+        }
+        context += addition;
+        currentLength += addition.length;
+      }
+      
+      return context;
+    } catch (error) {
+      console.error('Failed to build context prompt:', error);
+      return "";
     }
-    
-    contextPrompt += `## Current Message\n${currentMessage}`;
-    
-    // Truncate if too long
-    if (contextPrompt.length > maxLength) {
-      contextPrompt = contextPrompt.substring(0, maxLength) + "...";
+  }
+
+  async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      const sessionFile = path.join(this.memoryDir, `${sessionId}.json`);
+      await fs.unlink(sessionFile);
+      
+      // TODO: Also delete from ChromaDB if available
+      
+      return true;
+    } catch (error) {
+      console.error(`Failed to delete session ${sessionId}:`, error);
+      return false;
     }
-    
-    return contextPrompt;
   }
 }
 
-// Helper function to extract useful tags from text
-export function extractTags(userMessage: string, assistantResponse: string): string[] {
-  const text = `${userMessage} ${assistantResponse}`.toLowerCase();
-  const tags: string[] = [];
+// Utility functions - fix to match expected signatures
+export function extractTags(text: string): string[] {
+  const commonTags = [
+    'javascript', 'typescript', 'python', 'react', 'node', 'docker', 
+    'kubernetes', 'aws', 'database', 'api', 'frontend', 'backend',
+    'deployment', 'security', 'performance', 'testing', 'debugging',
+    'configuration', 'integration', 'authentication', 'monitoring'
+  ];
   
-  // Technical terms
-  const techTerms = ['docker', 'kubernetes', 'java', 'python', 'javascript', 'typescript', 'react', 'node', 'npm', 'git', 'github', 'deployment', 'devops', 'ci/cd', 'testing', 'database', 'api', 'rest', 'graphql', 'aws', 'azure', 'gcp', 'linux', 'ubuntu', 'nginx', 'apache', 'mysql', 'postgresql', 'mongodb', 'redis'];
-  
-  techTerms.forEach(term => {
-    if (text.includes(term)) {
-      tags.push(term);
-    }
-  });
-  
-  // Action-based tags
-  if (text.includes('error') || text.includes('bug') || text.includes('fix')) {
-    tags.push('troubleshooting');
-  }
-  if (text.includes('deploy') || text.includes('build') || text.includes('release')) {
-    tags.push('deployment');
-  }
-  if (text.includes('config') || text.includes('setup') || text.includes('install')) {
-    tags.push('configuration');
-  }
-  if (text.includes('test') || text.includes('spec')) {
-    tags.push('testing');
-  }
-  
-  return [...new Set(tags)]; // Remove duplicates
+  const textLower = text.toLowerCase();
+  return commonTags.filter(tag => textLower.includes(tag));
 }
 
-// Helper function to extract context from messages
-export function extractContext(userMessage: string, assistantResponse: string): string[] {
+export function extractContext(text: string): string[] {
   const context: string[] = [];
   
-  // Extract file paths
-  const pathRegex = /[\w\/\\-]+\.[\w]+/g;
-  const paths = [...userMessage.matchAll(pathRegex), ...assistantResponse.matchAll(pathRegex)];
-  paths.forEach(match => context.push(`file: ${match[0]}`));
+  // Extract file references
+  const fileRegex = /(?:file:|filename:|path:)\s*([^\s,]+)/gi;
+  let match;
+  while ((match = fileRegex.exec(text)) !== null) {
+    context.push(`file: ${match[1]}`);
+  }
   
   // Extract URLs
-  const urlRegex = /https?:\/\/[\w\.-]+/g;
-  const urls = [...userMessage.matchAll(urlRegex), ...assistantResponse.matchAll(urlRegex)];
-  urls.forEach(match => context.push(`url: ${match[0]}`));
+  const urlRegex = /https?:\/\/[^\s,]+/gi;
+  while ((match = urlRegex.exec(text)) !== null) {
+    context.push(`url: ${match[0]}`);
+  }
   
-  // Extract commands (simple heuristic)
-  const commandRegex = /`([^`]+)`/g;
-  const commands = [...userMessage.matchAll(commandRegex), ...assistantResponse.matchAll(commandRegex)];
-  commands.forEach(match => {
-    if (match[1].length < 50) { // Only short commands
-      context.push(`command: ${match[1]}`);
-    }
-  });
-  
-  return context;
+  return [...new Set(context)];
 }

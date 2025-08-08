@@ -130,10 +130,11 @@ export async function handleMemoryTool(name: string, args: any) {
         let tags = args.tags || [];
         let context = args.context || [];
         
-        // Auto-extract tags and context if requested
+        // Auto-extract tags and context if requested - fix function calls
         if (args.autoExtract !== false) {
-          const autoTags = extractTags(args.userMessage, args.assistantResponse);
-          const autoContext = extractContext(args.userMessage, args.assistantResponse);
+          const combinedText = `${args.userMessage} ${args.assistantResponse}`;
+          const autoTags = extractTags(combinedText);
+          const autoContext = extractContext(combinedText);
           tags = [...new Set([...tags, ...autoTags])];
           context = [...new Set([...context, ...autoContext])];
         }
@@ -192,7 +193,7 @@ export async function handleMemoryTool(name: string, args: any) {
         return {
           content: [{
             type: "text",
-            text: summary
+            text: JSON.stringify(summary, null, 2)
           }]
         };
       }
@@ -220,7 +221,7 @@ export async function handleMemoryTool(name: string, args: any) {
           content: [{
             type: "text",
             text: sessions.length > 0 
-              ? `Available sessions:\n${sessions.map(s => `• ${s}`).join('\n')}`
+              ? `Available sessions:\n${sessions.map((s: string) => `• ${s}`).join('\n')}`
               : "No conversation sessions found."
           }]
         };
