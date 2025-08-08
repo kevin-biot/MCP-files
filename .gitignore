@@ -8,6 +8,7 @@ pnpm-debug.log*
 # Build outputs
 dist/
 *.tsbuildinfo
+build/
 
 # Runtime data
 pids
@@ -45,6 +46,8 @@ jspm_packages/
 .env
 .env.test
 .env.production
+.env.local
+.env.*.local
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -73,36 +76,78 @@ jspm_packages/
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
 
 # Windows
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# ===========================================
+# MCP-FILES SPECIFIC EXCLUSIONS
+# ===========================================
 
 # Memory system data (keep local, don't push to repo)
 .mcp-memory/
+memory/
+conversation-memory/
 *.json.backup
 
-# ChromaDB data (keep local, don't push to repo)
+# ChromaDB data and backups (NEVER commit database files)
 chroma/
+chroma_backup/
+*.sqlite3
+*.db
+*.sqlite
 data/
+vector-db/
+embeddings/
 
-# Logs
+# Generated test data
+test-data/
+test-memory/
+debug-test/
+filesystem-test/
+cooking-test/
+similarity-test/
+performance-test/
+k8s-deployment-analysis/
+
+# Logs and debugging output
 *.log
 logs/
+chroma.log
+mcp-server.log
+debug.log
+error.log
 
-# Temporary files
+# Temporary files and caches
 *.tmp
 *.temp
 temp/
+cache/
+.tmp/
 
-# IDE
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.vimrc
+.sublime-*
 
-# Debug scripts (keep these out of the clean repo)
+# Debug and utility scripts (keep repo clean)
 debug-*.sh
 test-*.sh
 *-fix*.sh
@@ -111,3 +156,51 @@ api-fix*.sh
 rebuild*.sh
 force-*.sh
 install-*.sh
+cleanup*.sh
+reset*.sh
+
+# Personal configuration files
+config.local.json
+settings.local.json
+personal-*.json
+my-*.json
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Generated documentation
+docs/generated/
+api-docs/
+
+# Security and sensitive data
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+keys/
+
+# Operating system files
+.Trash-*
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.DocumentRevisions-V100
+.fseventsd
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Performance and profiling
+*.cpuprofile
+*.heapprofile
+*.heapsnapshot
+.clinic/
+
+# Package manager lockfiles (optional - some teams commit these)
+# Uncomment if you don't want to track lockfiles:
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
