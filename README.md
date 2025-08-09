@@ -97,7 +97,8 @@ npm run start:http ~/Documents ~/Projects ~/Code
 **Step 4: Look for Success Messages**
 ```
 ✓ ChromaDB client initialized
-✓ Deleted existing ChromaDB collection
+✓ Deleted corrupted ChromaDB collection
+ℹ Creating new ChromaDB collection with embedding function
 ✓ Created new ChromaDB collection with cosine distance
 ✓ Chroma memory manager initialized with vector search
 ```
@@ -132,7 +133,34 @@ npm run start:http ~/Documents ~/Projects ~/Code
 
 ### 🏆 **Claude Desktop (Recommended Setup)**
 
-**With Full Memory System:**
+**✅ Working Configuration (HTTP Mode via mcp-remote):**
+```json
+{
+  "mcpServers": {
+    "files-advanced": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://127.0.0.1:8080/mcp"
+      ]
+    }
+  }
+}
+```
+
+**Start server separately:**
+```bash
+cd /path/to/MCP-files
+
+# Terminal 1: Start ChromaDB (for memory system)
+chroma run --host 127.0.0.1 --port 8000
+
+# Terminal 2: Start MCP server
+npm run start:http ~/Documents ~/Projects ~/Code
+```
+
+**Alternative: Stdio Mode (Experimental):**
 ```json
 {
   "mcpServers": {
@@ -149,18 +177,7 @@ npm run start:http ~/Documents ~/Projects ~/Code
 }
 ```
 
-**Basic Filesystem Only:**
-```json
-{
-  "mcpServers": {
-    "files": {
-      "command": "npm",
-      "args": ["run", "start:stdio", "~/Documents", "~/Projects"],
-      "cwd": "/path/to/MCP-files"
-    }
-  }
-}
-```
+**Note:** The HTTP mode with `mcp-remote` is recommended as it provides better stability and compatibility with Claude Desktop's MCP implementation.
 
 ### 🌐 **LM Studio (HTTP Mode)**
 
@@ -325,6 +342,24 @@ Check MCP server logs for:
    ✓ Created new ChromaDB collection
    ✓ Chroma memory manager initialized with vector search
    ```
+
+#### **Problem: Embedding function errors**
+```
+❌ ChromaValueError: Embedding function must be defined for operations requiring embeddings
+```
+
+**Solution:** Collection created without proper embedding function
+```bash
+# This indicates a corrupted collection state
+# Restart the server to force collection recreation:
+cd /path/to/MCP-files
+npm run start:http ~/Documents
+
+# Look for these success messages:
+✓ Deleted corrupted ChromaDB collection
+ℹ Creating new ChromaDB collection with embedding function
+✓ Created new ChromaDB collection with cosine distance
+```
 
 #### **Problem: All similarity scores are 0.5**
 ```
