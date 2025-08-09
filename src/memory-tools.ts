@@ -98,6 +98,14 @@ export const memoryTools: Array<{
     }
   },
   {
+    name: "reload_memories_from_json",
+    description: "Bulk reload all existing JSON memories into ChromaDB for vector search",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
     name: "delete_memory_session",
     description: "Delete all memories for a specific session",
     inputSchema: {
@@ -223,6 +231,17 @@ export async function handleMemoryTool(name: string, args: any) {
             text: sessions.length > 0 
               ? `Available sessions:\n${sessions.map((s: string) => `• ${s}`).join('\n')}`
               : "No conversation sessions found."
+          }]
+        };
+      }
+
+    case "reload_memories_from_json":
+      {
+        const result = await memoryManager.reloadAllMemoriesFromJson();
+        return {
+          content: [{
+            type: "text",
+            text: `🔄 Bulk reload completed!\n\n• Memories loaded: ${result.loaded}\n• Errors: ${result.errors}\n\nAll existing JSON memories are now available for fast vector search in ChromaDB.`
           }]
         };
       }

@@ -26,6 +26,19 @@ import {
   TreeEntry
 } from './types.js';
 
+// Performance monitoring interface
+interface PerformanceMetric {
+  timestamp: string;
+  tool: string;
+  duration: number;
+  responseSize: number;
+  estimatedThroughput: number;
+  success: boolean;
+}
+
+// Performance metrics storage
+const performanceMetrics: PerformanceMetric[] = [];
+
 import { parseArguments, validatePath, expandHome, normalizePath } from './utils/path-utils.js';
 import {
   getFileStats,
@@ -150,6 +163,17 @@ const tools = [
       required: [],
     },
   },
+  {
+    name: "performance_report",
+    description: "Get performance metrics for recent tool calls, showing response times and throughput.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        last_minutes: { type: "number", default: 10 }
+      },
+      required: [],
+    },
+  },
   
   // Memory tools
   ...memoryTools
@@ -162,8 +186,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // Tool handlers
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const startTime = performance.now();
+  
   try {
     const { name, arguments: args } = request.params;
+    console.log(`📊 Tool called: ${name} at ${new Date().toISOString().slice(11, 19)}`);
 
     switch (name) {
       case "read_file": {

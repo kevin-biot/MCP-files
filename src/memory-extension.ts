@@ -51,27 +51,26 @@ export class ChromaMemoryManager {
       // Only try ChromaDB if client was successfully created
       if (this.client) {
         try {
-          // Force delete existing collection to fix embedding function mismatch
+          // Try to get existing collection first
           try {
-            await this.client.deleteCollection({
-              name: "llm_conversation_memory"
+            this.collection = await this.client.getCollection({
+              name: "llm_conversation_memory",
+              embeddingFunction: new DefaultEmbeddingFunction()
             });
-            console.log("✓ Deleted corrupted ChromaDB collection");
-          } catch (deleteError) {
-            // Collection might not exist, which is fine
-            console.log("ℹ No existing collection to delete (this is normal)");
+            console.log("✓ Connected to existing ChromaDB collection");
+          } catch (getError) {
+            console.log("ℹ No existing collection found, creating new one");
+            
+            // Only create new if collection doesn't exist
+            this.collection = await this.client.createCollection({
+              name: "llm_conversation_memory",
+              embeddingFunction: new DefaultEmbeddingFunction(),
+              metadata: {
+                "hnsw:space": "cosine"
+              }
+            });
+            console.log("✓ Created new ChromaDB collection with cosine distance");
           }
-          
-          // Create new collection with proper embedding function
-          console.log("ℹ Creating new ChromaDB collection with embedding function");
-          this.collection = await this.client.createCollection({
-            name: "llm_conversation_memory",
-            embeddingFunction: new DefaultEmbeddingFunction(),
-            metadata: {
-              "hnsw:space": "cosine"
-            }
-          });
-          console.log("✓ Created new ChromaDB collection with cosine distance");
         } catch (error) {
           console.error("ChromaDB collection creation failed:", error);
           throw error;
@@ -342,6 +341,62 @@ export class ChromaMemoryManager {
     } catch (error) {
       console.error(`Failed to delete session ${sessionId}:`, error);
       return false;
+    }
+  }
+
+  async reloadAllMemoriesFromJson(): Promise<{ loaded: number, errors: number }> {
+    if (!this.collection) {
+      console.error('ChromaDB not available for reload');
+      return { loaded: 0, errors: 0 };
+    }
+
+    try {
+      const sessionFiles = await fs.readdir(this.memoryDir);
+      let loaded = 0;
+      let errors = 0;
+      
+      console.log(`🔄 Starting bulk reload of ${sessionFiles.length} session files into ChromaDB...`);
+      
+      for (const file of sessionFiles) {
+        if (!file.endsWith('.json')) continue;
+        
+        try {
+          const filePath = path.join(this.memoryDir, file);
+          const content = await fs.readFile(filePath, 'utf8');
+          const memories: ConversationMemory[] = JSON.parse(content);
+          
+          for (const memory of memories) {
+            const id = `${memory.sessionId}_${memory.timestamp}`;
+            const document = `User: ${memory.userMessage}\nAssistant: ${memory.assistantResponse}`;
+            
+            await this.collection.add({
+              ids: [id],
+              documents: [document],
+              metadatas: [{
+                sessionId: memory.sessionId,
+                timestamp: memory.timestamp,
+                userMessage: memory.userMessage,
+                assistantResponse: memory.assistantResponse,
+                context: memory.context.join(', '),
+                tags: memory.tags.join(', ')
+              }]
+            });
+            
+            loaded++;
+          }
+          
+          console.log(`✓ Loaded ${memories.length} memories from ${file}`);
+        } catch (error) {
+          console.error(`✗ Failed to load ${file}:`, error);
+          errors++;
+        }
+      }
+      
+      console.log(`🎉 Bulk reload complete: ${loaded} memories loaded, ${errors} errors`);
+      return { loaded, errors };
+    } catch (error) {
+      console.error('Bulk reload failed:', error);
+      return { loaded: 0, errors: 1 };
     }
   }
 }
