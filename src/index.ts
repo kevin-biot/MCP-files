@@ -52,6 +52,10 @@ import {
 // Memory system imports
 import { initializeMemoryManager, memoryTools, handleMemoryTool } from './memory-tools.js';
 
+// Performance benchmarking imports
+import { BenchmarkWrapper } from './performance-benchmark.js';
+import { EnhancedBenchmarkWrapper } from './enhanced-benchmark.js';
+
 // Parse command line arguments
 const { httpMode, port, directoryArgs } = parseArguments(process.argv.slice(2));
 
@@ -164,15 +168,54 @@ const tools = [
     },
   },
   {
-    name: "performance_report",
-    description: "Get performance metrics for recent tool calls, showing response times and throughput.",
+    name: "get_performance_report",
+    description: "Generate detailed performance benchmarking report for tool usage analysis and LLM comparison",
     inputSchema: {
       type: "object",
       properties: {
-        last_minutes: { type: "number", default: 10 }
+        includeComparison: { 
+          type: "boolean", 
+          description: "Include LLM performance comparison if multiple models tested",
+          default: true 
+        }
+      }
+    }
+  },
+  {
+    name: "set_llm_model",
+    description: "Set the current LLM model name for performance tracking and comparison",
+    inputSchema: {
+      type: "object",
+      properties: {
+        modelName: { 
+          type: "string", 
+          description: "Name of the LLM model (e.g., 'claude-sonnet-4', 'gpt-4', 'llama-3.1-405b')" 
+        }
       },
-      required: [],
-    },
+      required: ["modelName"]
+    }
+  },
+  {
+    name: "reset_performance_session",
+    description: "Reset current performance tracking session (useful when switching LLMs)",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "get_enhanced_performance_report",
+    description: "Generate enhanced performance report including LLM thinking time analysis and session gaps",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeThinkingAnalysis: {
+          type: "boolean",
+          description: "Include detailed thinking time breakdown",
+          default: true
+        }
+      }
+    }
   },
   
   // Memory tools
@@ -186,13 +229,56 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // Tool handlers
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const startTime = performance.now();
-  
   try {
     const { name, arguments: args } = request.params;
-    console.log(`📊 Tool called: ${name} at ${new Date().toISOString().slice(11, 19)}`);
 
-    switch (name) {
+    // Handle performance tools first (don't wrap these in benchmarking)
+    if (name === "get_performance_report") {
+      const includeComparison = (args as any)?.includeComparison ?? true;
+      return {
+        content: [{
+          type: "text",
+          text: BenchmarkWrapper.getReport(includeComparison)
+        }]
+      };
+    }
+    
+    if (name === "set_llm_model") {
+      const modelName = (args as any)?.modelName;
+      if (!modelName) {
+        throw new Error("modelName is required");
+      }
+      BenchmarkWrapper.setModel(modelName);
+      return {
+        content: [{
+          type: "text",
+          text: `✅ LLM model set to: ${modelName}\nPerformance tracking enabled for comparison analysis.`
+        }]
+      };
+    }
+    
+    if (name === "reset_performance_session") {
+      BenchmarkWrapper.reset();
+      return {
+        content: [{
+          type: "text",
+          text: `🔄 Performance session reset. New session started for clean metrics.`
+        }]
+      };
+    }
+    
+    if (name === "get_enhanced_performance_report") {
+      return {
+        content: [{
+          type: "text",
+          text: EnhancedBenchmarkWrapper.getEnhancedReport()
+        }]
+      };
+    }
+
+    // Wrap all other tools with enhanced performance benchmarking (includes thinking time)
+    return await EnhancedBenchmarkWrapper.wrapTool(name, args, async () => {
+      switch (name) {
       case "read_file": {
         const parsed = ReadFileArgsSchema.safeParse(args);
         if (!parsed.success) {
@@ -439,7 +525,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       default:
         throw new Error(`Unknown tool: ${name}`);
-    }
+      }
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {

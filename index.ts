@@ -20,6 +20,9 @@ import { minimatch } from 'minimatch';
 // Memory system imports
 import { initializeMemoryManager, memoryTools, handleMemoryTool } from './memory-tools.js';
 
+// Performance benchmarking imports
+import { BenchmarkWrapper } from './performance-benchmark.js';
+
 // Command line argument parsing
 const args = process.argv.slice(2);
 
