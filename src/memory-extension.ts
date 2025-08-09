@@ -1,4 +1,5 @@
 import { ChromaClient } from 'chromadb';
+import { DefaultEmbeddingFunction } from '@chroma-core/default-embed';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -27,7 +28,7 @@ export class ChromaMemoryManager {
     this.memoryDir = memoryDir;
     
     try {
-      // Connect to ChromaDB HTTP server (no embedding function needed for server mode)
+      // Connect to ChromaDB HTTP server with embedding function
       this.client = new ChromaClient({
         host: "127.0.0.1",
         port: 8000
@@ -50,20 +51,22 @@ export class ChromaMemoryManager {
       // Only try ChromaDB if client was successfully created
       if (this.client) {
         try {
-          // First, try to delete existing collection to ensure clean state
+          // Force delete existing collection to fix embedding function mismatch
           try {
             await this.client.deleteCollection({
               name: "llm_conversation_memory"
             });
-            console.log("✓ Deleted existing ChromaDB collection");
+            console.log("✓ Deleted corrupted ChromaDB collection");
           } catch (deleteError) {
             // Collection might not exist, which is fine
             console.log("ℹ No existing collection to delete (this is normal)");
           }
           
-          // Create new collection (server will handle embeddings automatically)
+          // Create new collection with proper embedding function
+          console.log("ℹ Creating new ChromaDB collection with embedding function");
           this.collection = await this.client.createCollection({
             name: "llm_conversation_memory",
+            embeddingFunction: new DefaultEmbeddingFunction(),
             metadata: {
               "hnsw:space": "cosine"
             }
